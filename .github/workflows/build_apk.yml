@@ -1,0 +1,91 @@
+# .github/workflows/build_apk.yml
+# This workflow automates the process of building your Kivy Android application
+# using Buildozer and GitHub Actions.
+
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main # Trigger this workflow on pushes to the 'main' branch
+  workflow_dispatch: # Allows manual triggering of the workflow from the GitHub UI
+
+jobs:
+  build:
+    # Use a macOS runner because it's generally more reliable for Android builds
+    # and has pre-installed Android SDK/NDK components.
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4 # Action to check out your repository code
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9' # Specify a Python version compatible with Kivy/Buildozer
+
+      - name: Install Buildozer and Prerequisites
+        run: |
+          # Install AdoptOpenJDK 11, a commonly compatible JDK for Android builds.
+          # Homebrew is used on macOS runners to manage packages.
+          brew tap AdoptOpenJDK/openjdk
+          brew install --cask adoptopenjdk11
+
+          # Set JAVA_HOME environment variable to the path of the installed JDK 11.
+          # This ensures Buildozer and underlying Android SDK tools use the correct JDK.
+          # The /usr/libexec/java_home utility helps locate the specific JDK version.
+          JAVA_HOME_11=$(/usr/libexec/java_home -v 11)
+          echo "JAVA_HOME=$JAVA_HOME_11" >> $GITHUB_ENV
+          echo "$JAVA_HOME_11/bin" >> $GITHUB_PATH # Add Java bin directory to PATH
+
+          # Install Buildozer Python package and Cython.
+          # Cython is often a dependency for Kivy's compilation process for Android.
+          pip install buildozer cython
+
+          # On macOS, Xcode Command Line Tools provide essential build utilities.
+          # These are usually pre-installed on 'macos-latest' runners, but
+          # ensuring general build environment readiness is always good.
+
+      - name: Clean Buildozer environment and setup for Android
+        run: |
+          # Explicitly remove the .buildozer directory to ensure a completely clean build.
+          # This prevents issues from corrupted or outdated Buildozer caches, especially
+          # if previous builds failed unexpectedly.
+          rm -rf .buildozer
+          mkdir -p .buildozer # Recreate the directory
+
+          # Initialize buildozer for Android debug mode. This step is crucial:
+          # it downloads necessary Android SDK/NDK components and sets up
+          # the build environment according to your buildozer.spec file.
+          buildozer android debug clean
+
+      - name: Set Environment Variables for Email Credentials (Important!)
+        # Your Python code uses environment variables for email authentication.
+        # It's critical for security NOT to hardcode these sensitive values
+        # directly in your buildozer.spec or source code within the repository.
+        # Instead, use GitHub Secrets.
+        # Go to your repository settings -> Secrets and variables -> Actions
+        # and add FACEAPP_EMAIL and FACEAPP_PASS as secrets.
+        # The workflow will then inject them as environment variables during the build.
+        run: |
+          echo "FACEAPP_EMAIL=${{ secrets.FACEAPP_EMAIL }}" >> $GITHUB_ENV
+          echo "FACEAPP_PASS=${{ secrets.FACEAPP_PASS }}" >> $GITHUB_ENV
+        env: # These are provided for local testing context within the runner if needed.
+          FACEAPP_EMAIL: ${{ secrets.FACEAPP_EMAIL }}
+          FACEAPP_PASS: ${{ secrets.FACEAPP_PASS }}
+
+      - name: Build Android Debug APK
+        # This command triggers the actual build process using Buildozer.
+        # The environment variables (JAVA_HOME, FACEAPP_EMAIL, FACEAPP_PASS)
+        # set in previous steps will be available to Buildozer during this phase.
+        run: buildozer android debug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: faceapp-apk
+          # The resulting APK will be located in the 'bin/' directory,
+          # as configured in your buildozer.spec file.
+          path: bin/*.apk
+          retention-days: 7 # The artifact (APK file) will be kept for 7 days.
